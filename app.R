@@ -6,6 +6,7 @@ library(tidyr)
 library(lubridate)
 library(dygraphs)
 library(dutils)
+library(purrr)
 source('utils.R')
 
 config <- config::get(file = 'config.yml')
@@ -17,7 +18,7 @@ boto3 <- import("boto3")
 pd <- import("pandas")
 # dynamodb_filter <- import("boto3.dynamodb")$conditions
 dbKey <- import("boto3.dynamodb")$conditions$Key
-
+dbAttr <- import("boto3.dynamodb")$conditions$Attr
 
 # Database import --------------------------------------------------
 dynamodb <- boto3$resource('dynamodb',
@@ -25,8 +26,8 @@ dynamodb <- boto3$resource('dynamodb',
                            aws_secret_access_key = config$dynamodb$secret_access_key,
                            region_name = config$dynamodb$region_name)
 
-table <- dynamodb$Table(config$dynamodb$table)
-table_libelium <- dynamodb$Table('LibeliumMeasures')
+table <- dynamodb$Table(config$dynamodb$table_hp)
+table_libelium <- dynamodb$Table(config$dynamodb$table_meshlium)
 
 
 
@@ -49,8 +50,9 @@ ui <- fluidPage(
                     <li><b>Tp,i</b>: Temperatura màquina - pou</li>
                     <li><b>Tp,r</b>: Temperatura pou - màquina</li>
                     <li><b>Td</b>: Temperatura dipòsit</li>
-                    <li><b>Tint</b>: Temperatura interior</li>
                     <li><b>Te</b>: Temperatura exterior</li>
+                    <li><b>Temp_*</b>: Temperatura dels sensors del laboratori</li>
+                    <li><b>Tint</b>: Temperatura mitjana dels sensors del laboratori</li>
                 </ul>
                 "
             ),
@@ -94,13 +96,13 @@ server <- function(input, output) {
             select(datetime, Tint, everything()) %>% 
             arrange(datetime)
     
-        data[, c(1, 2, grep('Temp_', names(data)))]
+        data[, c(1, 2, grep('Temp_4', names(data)))]
     })
     
     total_data <- reactive({
         temperatures() %>% 
             left_join(tint(), by = 'datetime') %>% 
-            fill(Tint, .direction = 'downup')
+            fill(colnames(tint())[c(2, grep('Temp_4', names(tint())))], .direction = 'downup')
     }) 
     
     output$plot <- renderDygraph({

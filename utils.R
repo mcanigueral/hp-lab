@@ -14,5 +14,3 @@ parse_object <- function(object) {
 parse_item <- function(values_list) {
   map(values_list, ~ parse_object(.x))
 }
-
-parse_item(response$Items[[1]])
