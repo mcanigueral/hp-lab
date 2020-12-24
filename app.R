@@ -15,8 +15,6 @@ config <- config::get(file = 'config.yml')
 reticulate::use_python(config$python_path, required = T) # Restart R session to change the python env
 # reticulate::source_python("support/dynamodb_utils.py")
 boto3 <- import("boto3")
-pd <- import("pandas")
-# dynamodb_filter <- import("boto3.dynamodb")$conditions
 dbKey <- import("boto3.dynamodb")$conditions$Key
 dbAttr <- import("boto3.dynamodb")$conditions$Attr
 
@@ -28,7 +26,16 @@ dynamodb <- boto3$resource('dynamodb',
 
 table <- dynamodb$Table(config$dynamodb$table_hp)
 table_libelium <- dynamodb$Table(config$dynamodb$table_meshlium)
+table_control <- dynamodb$Table(config$dynamodb$table_control)
 
+# Get initial control table
+response <- table_control$scan()
+hp_control <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>%
+    rename(day_type = `day-type`) %>%
+    select(day_type, hour, setpoint, speed)
+setpoints_inputs_list <- pmap(hp_control, ~ paste0('setpoint', '_', ..1, '_', ..2))
+speeds_inputs_list <- pmap(hp_control, ~ paste0('speed', '_', ..1, '_', ..2))
+control_inputs_names <- c(setpoints_inputs_list, speeds_inputs_list)
 
 
 # UI ----------------------------------------------------------------------
@@ -62,17 +69,61 @@ ui <- fluidPage(
             )
         ),
         mainPanel(
-           fluidRow(
-               dygraphOutput("plot")
-           ),
-           hr()
+            tabsetPanel(
+                type = "tabs",
+                tabPanel(
+                    "Gràfics",
+                    dygraphOutput("plot")
+                ),
+                tabPanel(
+                    "Controls",
+                    br(),
+                    fluidRow(
+                        column(
+                            2,
+                            actionButton("pull_config", "Pull", icon = icon("cloud-download-alt")),
+                            actionButton("push_config", "Push", icon = icon("cloud-upload-alt"))
+                        ),
+                        column(
+                            5,
+                            h4("Dilluns - Divendres")
+                        ),
+                        column(
+                            5,
+                            h4("Dissabte - Diumenge")
+                        )
+                    ),
+                    fluidRow(
+                        column(
+                            2,
+                            h5("Hora"),
+                            map(
+                                as.list(0:23),
+                                ~ numericInput(paste0('hour', '_', .x), NULL, .x)
+                            )
+                        ),
+                        column(
+                            5,
+                            tableInput(hp_control, "weekday")
+                        ),
+                        column(
+                            5,
+                            tableInput(hp_control, "weekend")
+                        )
+                    )
+                    
+                )
+            )
         )
     )
 )
 
 
 # Server ------------------------------------------------------------------
-server <- function(input, output) {
+server <- function(input, output, session) {
+    
+
+    # Gràfic ------------------------------------------------------------------
     
     temperatures <- reactive({
         response <- table$query(
@@ -118,6 +169,39 @@ server <- function(input, output) {
             writexl::write_xlsx(total_data(), path = file)
         }
     )
+    
+
+    # Consignes ---------------------------------------------------------------
+    
+    # Pull control table when Pull
+    hp_control_updated <- eventReactive(input$pull_config, ignoreNULL = FALSE, {
+        response <- table_control$scan()
+        map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
+            rename(day_type = `day-type`) %>% 
+            select(day_type, hour, setpoint, speed)
+    })
+    
+    # Update UI values
+    observeEvent(input$pull_config, {
+        message("Pulling from DynamoDB")
+        walk(
+            control_inputs_names,
+            ~ updateNumericInput(
+                session, .x, 
+                value = get_control_value(hp_control_updated(), .x)
+            )
+        )
+    })
+    
+    # Update DynamoDB when Push
+    observeEvent(input$push_config, {
+        message("Pushing to DynamoDB")
+        walk(
+            control_inputs_names, 
+            ~ update_control_value(table_control, .x, input[[.x]])
+        )
+    })
+
 }
 
 # Run the application 

@@ -10,10 +10,7 @@ config <- config::get(file = 'config.yml')
 
 # Python
 reticulate::use_python(config$python_path, required = T) # Restart R session to change the python env
-# reticulate::source_python("support/dynamodb_utils.py")
 boto3 <- import("boto3")
-pd <- import("pandas")
-# dynamodb_filter <- import("boto3.dynamodb")$conditions
 dbKey <- import("boto3.dynamodb")$conditions$Key
 dbAttr <- import("boto3.dynamodb")$conditions$Attr
 
@@ -23,7 +20,7 @@ dynamodb <- boto3$resource('dynamodb',
                            aws_secret_access_key = config$dynamodb$secret_access_key,
                            region_name = config$dynamodb$region_name)
 
-table <- dynamodb$Table(config$dynamodb$table)
+table <- dynamodb$Table(config$dynamodb$table_hp)
 
 response <- table$query(
   KeyConditionExpression = dbKey("day")$eq(as.character(Sys.Date()))
@@ -45,7 +42,7 @@ temperatures %>%
 
 
 
-# libelium ----------------------------------------------------------------
+# Libelium ----------------------------------------------------------------
 
 table_libelium <- dynamodb$Table('LibeliumMeasures')
 
@@ -57,6 +54,25 @@ data <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>%
   mutate(datetime = with_tz(as_datetime(ts), tzone = 'Europe/Madrid')) %>% 
   select(datetime, Tint) %>% 
   arrange(datetime)
+
+
+
+# Modify setpoints table values -----------------------------------------------------
+
+table_control <- dynamodb$Table(config$dynamodb$table_control)
+
+response <- table_control$scan()
+
+hp_control <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
+  rename(day_type = `day-type`) %>% 
+  select(day_type, hour, setpoint, speed)
+
+
+
+
+
+
+
 
 
 
