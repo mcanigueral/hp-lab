@@ -44,8 +44,8 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel = sidebarPanel(
             dateInput("date", "Dia a visualitzar:", 
-                      value = Sys.Date(),
-                      min = dmy(01122020), max = Sys.Date()),
+                      value = today(),
+                      min = dmy(01122020), max = today()),
             HTML(
                 "
                 <p>
@@ -73,7 +73,26 @@ ui <- fluidPage(
                 type = "tabs",
                 tabPanel(
                     "Gràfics",
-                    dygraphOutput("plot")
+                    tabsetPanel(
+                        type = "pills",
+                        tabPanel(
+                            "Tot",
+                            dygraphOutput("plot")
+                        ),
+                        tabPanel(
+                            "Pous",
+                            dygraphOutput("plot_pous")
+                        ),
+                        tabPanel(
+                            "Dipòsit",
+                            dygraphOutput("plot_diposit")
+                        ),
+                        tabPanel(
+                            "Lab",
+                            dygraphOutput("plot_lab")
+                        )
+                    )
+                    
                 ),
                 tabPanel(
                     "Controls",
@@ -124,7 +143,6 @@ server <- function(input, output, session) {
     
 
     # Gràfic ------------------------------------------------------------------
-    
     temperatures <- reactive({
         response <- table$query(
             KeyConditionExpression = dbKey("day")$eq(as.character(input$date))
@@ -163,8 +181,32 @@ server <- function(input, output, session) {
             format_dygraph(strokeWidth = 2)
     })
     
+    output$plot_pous <- renderDygraph({
+        total_data() %>% 
+            select(c("datetime", grep('Tp', names(.)), Te)) %>% 
+            df_to_ts() %>% 
+            dygraph("<h4><center>Gràfic de temperatures dels pous</center></h4>", ylab = "Temperatura (ºC)") %>% 
+            format_dygraph(strokeWidth = 2)
+    })
+    
+    output$plot_diposit <- renderDygraph({
+        total_data() %>% 
+            select(c("datetime", grep('Tm', names(.)), "Td")) %>% 
+            df_to_ts() %>% 
+            dygraph("<h4><center>Gràfic de temperatures del dipòsit</center></h4>", ylab = "Temperatura (ºC)") %>% 
+            format_dygraph(strokeWidth = 2)
+    })
+    
+    output$plot_lab <- renderDygraph({
+        total_data() %>% 
+            select(c("datetime", grep('Temp_4', names(.)), "Tint", "Te")) %>% 
+            df_to_ts() %>% 
+            dygraph("<h4><center>Gràfic de temperatures del laboratori</center></h4>", ylab = "Temperatura (ºC)") %>% 
+            format_dygraph(strokeWidth = 2)
+    })
+    
     output$download  <- downloadHandler(
-        filename = function() {paste0("hp_lab_", Sys.Date(), ".xlsx")},
+        filename = function() {paste0("hp_lab_", today(), ".xlsx")},
         content = function(file) {
             writexl::write_xlsx(total_data(), path = file)
         }
