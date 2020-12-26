@@ -3,10 +3,10 @@ library(reticulate)
 library(config)
 library(dplyr)
 library(tidyr)
+library(purrr)
 library(lubridate)
 library(dygraphs)
 library(dutils)
-library(purrr)
 source('utils.R')
 
 config <- config::get(file = 'config.yml')
@@ -44,8 +44,8 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel = sidebarPanel(
             dateInput("date", "Dia a visualitzar:", 
-                      value = today(),
-                      min = dmy(01122020), max = today()),
+                      value = get_current_date(),
+                      min = dmy(01122020), max = get_current_date()),
             HTML(
                 "
                 <p>
@@ -206,7 +206,7 @@ server <- function(input, output, session) {
     })
     
     output$download  <- downloadHandler(
-        filename = function() {paste0("hp_lab_", today(), ".xlsx")},
+        filename = function() {paste0("hp_lab_", get_current_date(), ".xlsx")},
         content = function(file) {
             writexl::write_xlsx(total_data(), path = file)
         }
