@@ -28,15 +28,6 @@ table <- dynamodb$Table(config$dynamodb$table_hp)
 table_libelium <- dynamodb$Table(config$dynamodb$table_meshlium)
 table_control <- dynamodb$Table(config$dynamodb$table_control)
 
-# Get initial control table
-response <- table_control$scan()
-hp_control <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>%
-    rename(day_type = `day-type`) %>%
-    select(day_type, hour, setpoint, speed)
-setpoints_inputs_list <- pmap(hp_control, ~ paste0('setpoint', '_', ..1, '_', ..2))
-speeds_inputs_list <- pmap(hp_control, ~ paste0('speed', '_', ..1, '_', ..2))
-control_inputs_names <- c(setpoints_inputs_list, speeds_inputs_list)
-
 
 # UI ----------------------------------------------------------------------
 ui <- fluidPage(
@@ -112,25 +103,7 @@ ui <- fluidPage(
                             h4("Dissabte - Diumenge")
                         )
                     ),
-                    fluidRow(
-                        column(
-                            2,
-                            h5("Hora"),
-                            map(
-                                as.list(0:23),
-                                ~ numericInput(paste0('hour', '_', .x), NULL, .x)
-                            )
-                        ),
-                        column(
-                            5,
-                            tableInput(hp_control, "weekday")
-                        ),
-                        column(
-                            5,
-                            tableInput(hp_control, "weekend")
-                        )
-                    )
-                    
+                    uiOutput('controls')
                 )
             )
         )
@@ -227,7 +200,7 @@ server <- function(input, output, session) {
     observeEvent(input$pull_config, {
         message("Pulling from DynamoDB")
         walk(
-            control_inputs_names,
+            control_inputs_names(),
             ~ updateNumericInput(
                 session, .x, 
                 value = get_control_value(hp_control_updated(), .x)
@@ -239,8 +212,36 @@ server <- function(input, output, session) {
     observeEvent(input$push_config, {
         message("Pushing to DynamoDB")
         walk(
-            control_inputs_names, 
+            control_inputs_names(), 
             ~ update_control_value(table_control, .x, input[[.x]])
+        )
+    })
+    
+    control_inputs_names <- reactive({
+        setpoints_inputs_list <- pmap(hp_control_updated(), ~ paste0('setpoint', '_', ..1, '_', ..2))
+        speeds_inputs_list <- pmap(hp_control_updated(), ~ paste0('speed', '_', ..1, '_', ..2))
+        c(setpoints_inputs_list, speeds_inputs_list)
+    })
+    
+    # Controls
+    output$controls <- renderUI({
+        fluidRow(
+            column(
+                2,
+                h5("Hora"),
+                map(
+                    as.list(0:23),
+                    ~ numericInput(paste0('hour', '_', .x), NULL, .x)
+                )
+            ),
+            column(
+                5,
+                tableInput(hp_control_updated(), "weekday")
+            ),
+            column(
+                5,
+                tableInput(hp_control_updated(), "weekend")
+            )
         )
     })
 
