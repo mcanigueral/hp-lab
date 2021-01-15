@@ -83,7 +83,6 @@ ui <- fluidPage(
                             dygraphOutput("plot_lab")
                         )
                     )
-                    
                 ),
                 tabPanel(
                     "Controls",
@@ -104,6 +103,24 @@ ui <- fluidPage(
                         )
                     ),
                     uiOutput('controls')
+                ),
+                tabPanel(
+                    "Info",
+                    tabsetPanel(
+                        type = "pills",
+                        tabPanel(
+                            "Configuració",
+                            dataTableOutput("table_config")
+                        ),
+                        tabPanel(
+                            "Funcionament",
+                            dataTableOutput("table_funcionament")
+                        ),
+                        tabPanel(
+                            "Rendiment",
+                            dygraphOutput("plot_cop")
+                        )
+                    )
                 )
             )
         )
@@ -116,7 +133,7 @@ server <- function(input, output, session) {
     
 
     # Gràfic ------------------------------------------------------------------
-    temperatures <- reactive({
+    data_hp <- reactive({
         response <- table$query(
             KeyConditionExpression = dbKey("day")$eq(as.character(input$date))
         )
@@ -124,8 +141,15 @@ server <- function(input, output, session) {
         data <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
             mutate(datetime = with_tz(force_tz(as_datetime(paste(day, time)), tzone = 'CEST'), tzone = 'Europe/Madrid')) %>% 
             select(datetime, everything(), -day, -time)
-        
-        data[, c(1, 4, 11, 12, 14, 16, 17)]
+        data
+    })
+    
+    temperatures <- reactive({
+        data_hp()[, c('datetime', 'Tm,i', 'Td', 'Te', 'Tm,r', 'Tp,impulsion', 'Tp,return', 'Temperature_S1')]
+    })
+    
+    info <- reactive({
+        data_hp()[, c('datetime', 'E_power', 'COP', 'EER', 'CONFIG', 'Operation_mode', 'Td,c_winter', 'Td,c_summer', 'Status message', 'Alarm', 'State ON/OFF')]
     })
     
     tint <- reactive({
@@ -149,37 +173,29 @@ server <- function(input, output, session) {
     
     output$plot <- renderDygraph({
         total_data() %>% 
-            df_to_ts() %>% 
-            dygraph("<h4><center>Gràfic de temperatures</center></h4>", ylab = "Temperatura (ºC)") %>% 
-            format_dygraph(strokeWidth = 2)
+            dyplot(title = "<h4><center>Gràfic de temperatures</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_pous <- renderDygraph({
         total_data() %>% 
-            select(c("datetime", grep('Tp', names(.)), Te)) %>% 
-            df_to_ts() %>% 
-            dygraph("<h4><center>Gràfic de temperatures dels pous</center></h4>", ylab = "Temperatura (ºC)") %>% 
-            format_dygraph(strokeWidth = 2)
+            select(c("datetime", grep('Tp', names(.)), 'Te', 'Temperature_S1')) %>% 
+            dyplot(title = "<h4><center>Gràfic de temperatures dels pous</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_diposit <- renderDygraph({
         total_data() %>% 
-            select(c("datetime", grep('Tm', names(.)), "Td")) %>% 
-            df_to_ts() %>% 
-            dygraph("<h4><center>Gràfic de temperatures del dipòsit</center></h4>", ylab = "Temperatura (ºC)") %>% 
-            format_dygraph(strokeWidth = 2)
+            select(c("datetime", grep('Tm', names(.)), "Td")) %>%
+            dyplot(title = "<h4><center>Gràfic de temperatures del dipòsit</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_lab <- renderDygraph({
         total_data() %>% 
             select(c("datetime", grep('Temp_4', names(.)), "Tint", "Te")) %>% 
-            df_to_ts() %>% 
-            dygraph("<h4><center>Gràfic de temperatures del laboratori</center></h4>", ylab = "Temperatura (ºC)") %>% 
-            format_dygraph(strokeWidth = 2)
+            dyplot(title = "<h4><center>Gràfic de temperatures del laboratori</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$download  <- downloadHandler(
-        filename = function() {paste0("hp_lab_", get_current_date(), ".xlsx")},
+        filename = function() {paste0("hp_lab_", Sys.Date(), ".xlsx")},
         content = function(file) {
             writexl::write_xlsx(total_data(), path = file)
         }
@@ -243,6 +259,28 @@ server <- function(input, output, session) {
                 tableInput(hp_control_updated(), "weekend")
             )
         )
+    })
+    
+
+# Informació --------------------------------------------------------------
+
+    output$table_config <- renderDataTable({
+        config_tbl <- info()[, c('datetime', 'CONFIG', 'Td,c_winter', 'Td,c_summer', 'Operation_mode')]
+        colnames(config_tbl) <- c('Dia i hora', 'Mode de configuració', 'Consigna dipòsit hivern', 'Consigna dipòsit estiu', "Mode d'operació")
+        return( config_tbl )
+    })
+    
+    output$table_funcionament <- renderDataTable({
+        funcionament_tbl <- info()[, c('datetime', 'Alarm', 'State ON/OFF')]
+        colnames(funcionament_tbl) <- c('Dia i hora', 'Alarma', 'Estat ON/OFF')
+        return( funcionament_tbl )
+    })
+    
+    output$plot_cop <- renderDygraph({
+        info() %>% 
+            select('datetime', 'E_power', 'COP', 'EER') %>% 
+            dyplot(ylab = '<b>Temperatura (ºC)</b>', strokeWidth = 2)
+            
     })
 
 }
