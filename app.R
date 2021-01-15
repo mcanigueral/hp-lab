@@ -40,7 +40,7 @@ ui <- fluidPage(
             HTML(
                 "
                 <p>
-                Explicació de les variables:
+                Explicació de les variables de temperatura:
                 </p>
                 <ul>
                     <li><b>Tm,i</b>: Temperatura màquina - dipòsit</li>
@@ -51,12 +51,31 @@ ui <- fluidPage(
                     <li><b>Te</b>: Temperatura exterior</li>
                     <li><b>Temp_*</b>: Temperatura dels sensors del laboratori</li>
                     <li><b>Tint</b>: Temperatura mitjana dels sensors del laboratori</li>
+                    <li><b>Temperature_S1</b>: Temperatura de la sonda de 50m dels pous</li>
                 </ul>
                 "
             ),
+            fluidRow(
+                align = 'center',
+                downloadButton("download", "Descarrega't les temperatures (Excel)")
+            ),
             hr(),
             fluidRow(
-                downloadButton("download", "Descarrega't les dades (Excel)")
+                HTML(
+                    "
+                    <p>
+                    Explicació de les variables d'informació:
+                    </p>
+                    <ul>
+                        <li><b>Mode d'operació</b>: Buffer (1), Buffer+Cooling (2), 1 Zone (3), 1 Zone - 2 Systems (4), 1 Zone - Multiemitter (5), 2 Zones (6), 2 Zones - 2 Systems (7)</li>
+                        <li><b>Mode de configuració:</b>: Hivern (0), Estiu (1), Automàtic (2)</li>
+                        <li><b>Alarma</b>: Amb alarmes FALSE, sense alarmes TRUE</li>
+                        <li><b>Estat ON/OFF</b>: Bomba ON (0), bomba OFF (1)</li>
+                        <li><b>COP</b>: Coefficient of Performance. Efficiència de la bomba de calor.</li>
+                        <li><b>EER</b>: Energy Efficiency Ratio. Efficiència de la bomba de calor <b> només per refrigeració </b>.</li>
+                    </ul>
+                    "
+                )
             )
         ),
         mainPanel(
@@ -202,7 +221,7 @@ server <- function(input, output, session) {
     )
     
 
-    # Consignes ---------------------------------------------------------------
+    # Controls ---------------------------------------------------------------
     
     # Pull control table when Pull
     hp_control_updated <- eventReactive(input$pull_config, ignoreNULL = FALSE, {
