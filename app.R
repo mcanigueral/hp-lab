@@ -164,11 +164,11 @@ server <- function(input, output, session) {
     })
     
     temperatures <- reactive({
-        data_hp()[, c('datetime', 'Tm,i', 'Td', 'Te', 'Tm,r', 'Tp,impulsion', 'Tp,return', 'Temperature_S1')]
+        select(data_hp(), any_of(c('datetime', 'Tm,i', 'Td', 'Te', 'Tm,r', 'Tp,impulsion', 'Tp,return', 'Temperature_S1')))
     })
     
     info <- reactive({
-        data_hp()[, c('datetime', 'E_power', 'COP', 'EER', 'CONFIG', 'Operation_mode', 'Td,c_winter', 'Td,c_summer', 'Status message', 'Alarm', 'State ON/OFF')]
+        select(data_hp(), any_of(c('datetime', 'E_power', 'COP', 'EER', 'CONFIG', 'Operation_mode', 'Td,c_winter', 'Td,c_summer', 'Status message', 'Alarm', 'State ON/OFF')))
     })
     
     tint <- reactive({
@@ -197,19 +197,19 @@ server <- function(input, output, session) {
     
     output$plot_pous <- renderDygraph({
         total_data() %>% 
-            select(c("datetime", grep('Tp', names(.)), 'Te', 'Temperature_S1')) %>% 
+            select(any_of(c("datetime", grep('Tp', names(.)), 'Te', 'Temperature_S1'))) %>% 
             dyplot(title = "<h4><center>Gràfic de temperatures dels pous</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_diposit <- renderDygraph({
         total_data() %>% 
-            select(c("datetime", grep('Tm', names(.)), "Td")) %>%
+            select(any_of(c("datetime", grep('Tm', names(.)), "Td"))) %>%
             dyplot(title = "<h4><center>Gràfic de temperatures del dipòsit</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_lab <- renderDygraph({
         total_data() %>% 
-            select(c("datetime", grep('Temp_4', names(.)), "Tint", "Te")) %>% 
+            select(any_of(c("datetime", grep('Temp_4', names(.)), "Tint", "Te"))) %>% 
             dyplot(title = "<h4><center>Gràfic de temperatures del laboratori</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
