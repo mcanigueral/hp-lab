@@ -18,7 +18,7 @@ boto3 <- import("boto3")
 dbKey <- import("boto3.dynamodb")$conditions$Key
 dbAttr <- import("boto3.dynamodb")$conditions$Attr
 
-# Database import --------------------------------------------------
+# DynamoDB client --------------------------------------------------
 dynamodb <- boto3$resource('dynamodb',
                            aws_access_key_id = config$dynamodb$access_key_id,
                            aws_secret_access_key = config$dynamodb$secret_access_key,
@@ -27,6 +27,14 @@ dynamodb <- boto3$resource('dynamodb',
 table <- dynamodb$Table(config$dynamodb$table_hp)
 table_libelium <- dynamodb$Table(config$dynamodb$table_meshlium)
 table_control <- dynamodb$Table(config$dynamodb$table_control)
+
+
+# IoT client --------------------------------------------------------------
+
+iot <- boto3$client('iot-data',
+                    aws_access_key_id = config$dynamodb$access_key_id,
+                    aws_secret_access_key = config$dynamodb$secret_access_key,
+                    region_name = config$dynamodb$region_name)
 
 
 # UI ----------------------------------------------------------------------
@@ -105,23 +113,33 @@ ui <- fluidPage(
                 ),
                 tabPanel(
                     "Controls",
-                    br(),
-                    fluidRow(
-                        column(
-                            2,
-                            actionButton("pull_config", "Pull", icon = icon("cloud-download-alt")),
-                            actionButton("push_config", "Push", icon = icon("cloud-upload-alt"))
+                    tabsetPanel(
+                        type = "pills",
+                        tabPanel(
+                            "Fancoil",
+                            br(),
+                            fluidRow(
+                                column(
+                                    2,
+                                    actionButton("pull_config", "Pull", icon = icon("cloud-download-alt")),
+                                    actionButton("push_config", "Push", icon = icon("cloud-upload-alt"))
+                                ),
+                                column(
+                                    5,
+                                    h4("Dilluns - Divendres")
+                                ),
+                                column(
+                                    5,
+                                    h4("Dissabte - Diumenge")
+                                )
+                            ),
+                            uiOutput('controls_fancoil')
                         ),
-                        column(
-                            5,
-                            h4("Dilluns - Divendres")
-                        ),
-                        column(
-                            5,
-                            h4("Dissabte - Diumenge")
+                        tabPanel(
+                            "Dipòsit",
+                            uiOutput('controls_diposit')
                         )
-                    ),
-                    uiOutput('controls')
+                    )
                 ),
                 tabPanel(
                     "Info",
@@ -258,8 +276,8 @@ server <- function(input, output, session) {
         c(setpoints_inputs_list, speeds_inputs_list)
     })
     
-    # Controls
-    output$controls <- renderUI({
+    # Controls fancoil
+    output$controls_fancoil <- renderUI({
         fluidRow(
             column(
                 2,
@@ -277,6 +295,44 @@ server <- function(input, output, session) {
                 5,
                 tableInput(hp_control_updated(), "weekend")
             )
+        )
+    })
+    
+    
+    # Controls dipòsit
+    output$controls_diposit <- renderUI({
+        Td <- as.list(info()[nrow(info()), c('Td,c_winter', 'Td,c_summer')])
+        tagList(
+            br(),
+            fluidRow(
+                column(
+                    3,
+                    numericInput('Td_winter', 'Consigna mode hivern (ºC)', Td[['Td,c_winter']], 25, 55, 0.5)
+                ),
+                column(
+                    3,
+                    numericInput('Td_summer', 'Consigna mode estiu (ºC)', Td[['Td,c_summer']], 8, 25, 0.5)
+                )
+            ),
+            fluidRow(
+                column(
+                    6,
+                    actionButton('update_Td', 'Actualitza', icon = icon("cloud-upload-alt")),
+                    hr()
+                )
+            ),
+            HTML("<b>Nota:</b> un cop actualitzades les temperatures es podran veure els canvis al cap de 10 minuts.")
+        )
+    })
+    
+    # Send MQTT message when push
+    observeEvent(input$update_Td, {
+        message("Actualitzant les Td")
+        mqtt_messsage <- paste0('{"Td,c_winter": "', input$Td_winter,'", "Td,c_summer": "', input$Td_summer, '"}')
+        iot$publish(                    
+            topic='pump/control',
+            qos=as.integer(1),
+            payload=mqtt_messsage
         )
     })
     
