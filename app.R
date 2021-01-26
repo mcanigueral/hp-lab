@@ -84,7 +84,11 @@ ui <- fluidPage(
                     </ul>
                     "
                 )
-            )
+            ),
+            fluidRow(
+                align = 'center',
+                downloadButton("download_info", "Descarrega't la informació (Excel)")
+            ),
         ),
         mainPanel(
             tabsetPanel(
@@ -232,9 +236,16 @@ server <- function(input, output, session) {
     })
     
     output$download  <- downloadHandler(
-        filename = function() {paste0("hp_lab_", Sys.Date(), ".xlsx")},
+        filename = function() {paste0("hp_lab_temperatures_", Sys.Date(), ".xlsx")},
         content = function(file) {
             writexl::write_xlsx(total_data(), path = file)
+        }
+    )
+    
+    output$download_info  <- downloadHandler(
+        filename = function() {paste0("hp_lab_information_", Sys.Date(), ".xlsx")},
+        content = function(file) {
+            writexl::write_xlsx(info(), path = file)
         }
     )
     
