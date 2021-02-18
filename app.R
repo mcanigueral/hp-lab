@@ -89,6 +89,8 @@ ui <- fluidPage(
                 align = 'center',
                 downloadButton("download_info", "Descarrega't la informació (Excel)")
             ),
+            hr(),
+            passwordInput('controls_password', "Contrassenya d'administrador:", width = "50%")
         ),
         mainPanel(
             tabsetPanel(
@@ -117,33 +119,7 @@ ui <- fluidPage(
                 ),
                 tabPanel(
                     "Controls",
-                    tabsetPanel(
-                        type = "pills",
-                        tabPanel(
-                            "Fancoil",
-                            br(),
-                            fluidRow(
-                                column(
-                                    2,
-                                    actionButton("pull_config", "Pull", icon = icon("cloud-download-alt")),
-                                    actionButton("push_config", "Push", icon = icon("cloud-upload-alt"))
-                                ),
-                                column(
-                                    5,
-                                    h4("Dilluns - Divendres")
-                                ),
-                                column(
-                                    5,
-                                    h4("Dissabte - Diumenge")
-                                )
-                            ),
-                            uiOutput('controls_fancoil')
-                        ),
-                        tabPanel(
-                            "Dipòsit",
-                            uiOutput('controls_diposit')
-                        )
-                    )
+                    uiOutput('controlsUI')
                 ),
                 tabPanel(
                     "Info",
@@ -251,6 +227,40 @@ server <- function(input, output, session) {
     
 
     # Controls ---------------------------------------------------------------
+    
+    # Password protected UI
+    output$controlsUI <- renderUI({
+        req(input$controls_password)
+        if (input$controls_password == "p1zz3r14") {
+            tabsetPanel(
+                type = "pills",
+                tabPanel(
+                    "Fancoil",
+                    br(),
+                    fluidRow(
+                        column(
+                            2,
+                            actionButton("pull_config", "Pull", icon = icon("cloud-download-alt")),
+                            actionButton("push_config", "Push", icon = icon("cloud-upload-alt"))
+                        ),
+                        column(
+                            5,
+                            h4("Dilluns - Divendres")
+                        ),
+                        column(
+                            5,
+                            h4("Dissabte - Diumenge")
+                        )
+                    ),
+                    uiOutput('controls_fancoil')
+                ),
+                tabPanel(
+                    "Dipòsit",
+                    uiOutput('controls_diposit')
+                )
+            )
+        }
+    })
     
     # Pull control table when Pull
     hp_control_updated <- eventReactive(input$pull_config, ignoreNULL = FALSE, {
