@@ -1,5 +1,4 @@
 library(shiny)
-library(reticulate)
 library(config)
 library(dplyr)
 library(tidyr)
@@ -8,29 +7,27 @@ library(lubridate)
 library(dygraphs)
 library(dutils)
 source('utils.R')
+reticulate::use_python(config$python_path, required = T) # Restart R session to change the python env
+boto3 <- reticulate::import("boto3")
+# dbKey <- reticulate::import("boto3.dynamodb")$conditions$Key
+options(scipen=999)
 
 config <- config::get(file = 'config.yml')
 
-# Python
-reticulate::use_python(config$python_path, required = T) # Restart R session to change the python env
-# reticulate::source_python("support/dynamodb_utils.py")
-boto3 <- import("boto3")
-dbKey <- import("boto3.dynamodb")$conditions$Key
-dbAttr <- import("boto3.dynamodb")$conditions$Attr
 
 # DynamoDB client --------------------------------------------------
-dynamodb <- boto3$resource('dynamodb',
-                           aws_access_key_id = config$dynamodb$access_key_id,
-                           aws_secret_access_key = config$dynamodb$secret_access_key,
-                           region_name = config$dynamodb$region_name)
+# DynamoDB Lab
+dynamodb <- get_dynamodb(config$dynamodb$access_key_id, config$dynamodb$secret_access_key, config$dynamodb$region_name)
+table <- get_dynamo_table(dynamodb, config$dynamodb$table_hp)
+table_libelium <- get_dynamo_table(dynamodb, config$dynamodb$table_meshlium)
+table_control <- get_dynamo_table(dynamodb, config$dynamodb$table_control)
 
-table <- dynamodb$Table(config$dynamodb$table_hp)
-table_libelium <- dynamodb$Table(config$dynamodb$table_meshlium)
-table_control <- dynamodb$Table(config$dynamodb$table_control)
+# DynamoDB Marc
+dynamodb_marc <- get_dynamodb(config$dynamodb_marc$access_key_id, config$dynamodb_marc$secret_access_key, config$dynamodb_marc$region_name)
+table_dht <- get_dynamo_table(dynamodb_marc, config$dynamodb_marc$table_dht)
 
 
 # IoT client --------------------------------------------------------------
-
 iot <- boto3$client('iot-data',
                     aws_access_key_id = config$dynamodb$access_key_id,
                     aws_secret_access_key = config$dynamodb$secret_access_key,
@@ -40,11 +37,15 @@ iot <- boto3$client('iot-data',
 # UI ----------------------------------------------------------------------
 ui <- fluidPage(
     titlePanel("Bomba de calor lab eXiT"),
+    hr(),
     sidebarLayout(
         sidebarPanel = sidebarPanel(
-            dateInput("date", "Dia a visualitzar:", 
-                      value = get_current_date(),
-                      min = dmy(01122020), max = get_current_date()),
+            dateRangeInput(
+                "dates", "Dia a visualitzar:", 
+                start = Sys.Date(), end = Sys.Date(),
+                min = dmy(01122020), max = Sys.Date(),
+                weekstart = 1, language = "ca",
+            ),
             HTML(
                 "
                 <p>
@@ -59,6 +60,8 @@ ui <- fluidPage(
                     <li><b>Te</b>: Temperatura exterior</li>
                     <li><b>Temp_*</b>: Temperatura dels sensors del laboratori</li>
                     <li><b>Tint</b>: Temperatura mitjana dels sensors del laboratori</li>
+                    <li><b>DHT_sensor</b>: Temperatura del sensor DHT22 del laboratori</li>
+                    <li><b>heat_index</b>: Índex de temperatura (sensació tèrmica per humitat)</li>
                     <li><b>Temperature_S1</b>: Temperatura de la sonda de 50m dels pous</li>
                 </ul>
                 "
@@ -76,7 +79,7 @@ ui <- fluidPage(
                     </p>
                     <ul>
                         <li><b>Mode d'operació</b>: Buffer (1), Buffer+Cooling (2), 1 Zone (3), 1 Zone - 2 Systems (4), 1 Zone - Multiemitter (5), 2 Zones (6), 2 Zones - 2 Systems (7)</li>
-                        <li><b>Mode de configuració:</b>: Hivern (0), Estiu (1), Automàtic (2)</li>
+                        <li><b>Mode de configuració</b>: Hivern (0), Estiu (1), Automàtic (2)</li>
                         <li><b>Alarma</b>: Amb alarmes FALSE, sense alarmes TRUE</li>
                         <li><b>Estat ON/OFF</b>: Bomba ON (0), bomba OFF (1)</li>
                         <li><b>COP</b>: Coefficient of Performance. Efficiència de la bomba de calor.</li>
@@ -90,10 +93,11 @@ ui <- fluidPage(
                 downloadButton("download_info", "Descarrega't la informació (Excel)")
             ),
             hr(),
-            passwordInput('controls_password', "Contrassenya d'administrador:", width = "50%")
+            passwordInput('controls_password', "Contrassenya d'administrador:", width = '50%')
         ),
         mainPanel(
             tabsetPanel(
+                id = "tabs",
                 type = "tabs",
                 tabPanel(
                     "Gràfics",
@@ -118,10 +122,6 @@ ui <- fluidPage(
                     )
                 ),
                 tabPanel(
-                    "Controls",
-                    uiOutput('controlsUI')
-                ),
-                tabPanel(
                     "Info",
                     tabsetPanel(
                         type = "pills",
@@ -138,7 +138,38 @@ ui <- fluidPage(
                             dygraphOutput("plot_cop")
                         )
                     )
-                )
+                ),
+                    tabPanel(
+                        "Controls",
+                        tabsetPanel(
+                            type = "pills",
+                            tabPanel(
+                                "Fancoil",
+                                br(),
+                                fluidRow(
+                                    column(
+                                        2,
+                                        actionButton("pull_config", "Pull", icon = icon("cloud-download-alt")),
+                                        actionButton("push_config", "Push", icon = icon("cloud-upload-alt"))
+                                    ),
+                                    column(
+                                        5,
+                                        h4("Dilluns - Divendres")
+                                    ),
+                                    column(
+                                        5,
+                                        h4("Dissabte - Diumenge")
+                                    )
+                                ),
+                                uiOutput('controls_fancoil')
+                            ),
+                            tabPanel(
+                                "Dipòsit",
+                                uiOutput('controls_diposit')
+                            )
+                        )
+                    )
+
             )
         )
     )
@@ -148,20 +179,16 @@ ui <- fluidPage(
 # Server ------------------------------------------------------------------
 server <- function(input, output, session) {
     
-
     # Gràfic ------------------------------------------------------------------
     data_hp <- reactive({
-        response <- table$query(
-            KeyConditionExpression = dbKey("day")$eq(as.character(input$date))
-        )
-        
-        data <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
+        # data <- dynamodb_query_items(table, "day", as.character(seq.Date(input$dates[1], input$dates[2], by = 'day'))) 
+        data <- query_table(table, "day", as.character(seq.Date(input$dates[1], input$dates[2], by = 'day'))) %>% 
             mutate(datetime = with_tz(force_tz(as_datetime(paste(day, time)), tzone = 'CEST'), tzone = 'Europe/Madrid')) %>% 
             select(datetime, everything(), -day, -time)
         data
     })
     
-    temperatures <- reactive({
+    hp_temperatures <- reactive({
         select(data_hp(), any_of(c('datetime', 'Tm,i', 'Td', 'Te', 'Tm,r', 'Tp,impulsion', 'Tp,return', 'Temperature_S1')))
     })
     
@@ -170,51 +197,59 @@ server <- function(input, output, session) {
     })
     
     tint <- reactive({
-        response <- table_libelium$scan(
-            FilterExpression = dbAttr("ts")$between(as.integer(as_datetime(input$date-hours(30))), as.integer(as_datetime(input$date+days(1))))
-        )
-        
-        data <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
-            mutate(datetime = with_tz(as_datetime(ts), tzone = 'Europe/Madrid')) %>% 
+        # response <- table_libelium$scan(
+        #     FilterExpression = dbAttr("ts")$between(as.integer(as_datetime(input$dates[1]-hours(10))), as.integer(as_datetime(input$dates[2]+hours(10))))
+        # )
+        # 
+        # data <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
+        data <- scan_table(table_libelium, "ts", as.integer(as_datetime(input$dates[1]-hours(10))), as.integer(as_datetime(input$dates[2]+hours(10)))) %>% 
+            mutate(datetime = as_datetime(ts, tz = 'Europe/Madrid')) %>% 
             select(datetime, Tint, everything()) %>% 
             arrange(datetime)
     
         data[, c(1, 2, grep('Temp_4', names(data)))]
     })
     
-    total_data <- reactive({
-        temperatures() %>% 
+    dht_sensor <- reactive({
+        query_timeseries_data_table(table_dht, "id", "4CFB", "timestamp", input$dates[1], input$dates[2], time_interval_mins = 15, spread_column = 'data') %>% 
+            select(datetime, DHT_sensor = temperature, heat_index)
+    })
+    
+    temperatures_data <- reactive({
+        hp_temperatures() %>% 
             left_join(tint(), by = 'datetime') %>% 
-            fill(colnames(tint())[c(2, grep('Temp_4', names(tint())))], .direction = 'downup')
+            left_join(dht_sensor(), by = 'datetime') %>% 
+            fill(c(colnames(tint())[-1], colnames(dht_sensor())[-1]), .direction = 'downup')
     }) 
     
     output$plot <- renderDygraph({
-        total_data() %>% 
+        temperatures_data() %>% 
             dyplot(title = "<h4><center>Gràfic de temperatures</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_pous <- renderDygraph({
-        total_data() %>% 
-            select(any_of(c("datetime", grep('Tp', names(.)), 'Te', 'Temperature_S1'))) %>% 
+        temperatures_data() %>% 
+            select(datetime, starts_with("Tp"), Te, Temperature_S1) %>% 
             dyplot(title = "<h4><center>Gràfic de temperatures dels pous</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_diposit <- renderDygraph({
-        total_data() %>% 
-            select(any_of(c("datetime", grep('Tm', names(.)), "Td"))) %>%
+        td <<- temperatures_data()
+        temperatures_data() %>% 
+            select(datetime, starts_with("Tm"), Td) %>%
             dyplot(title = "<h4><center>Gràfic de temperatures del dipòsit</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$plot_lab <- renderDygraph({
-        total_data() %>% 
-            select(any_of(c("datetime", grep('Temp_4', names(.)), "Tint", "Te"))) %>% 
+        temperatures_data() %>% 
+            select(datetime, starts_with("Temp_"), Tint, Te, DHT_sensor, heat_index) %>% 
             dyplot(title = "<h4><center>Gràfic de temperatures del laboratori</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
     
     output$download  <- downloadHandler(
         filename = function() {paste0("hp_lab_temperatures_", Sys.Date(), ".xlsx")},
         content = function(file) {
-            writexl::write_xlsx(total_data(), path = file)
+            writexl::write_xlsx(temperatures_data(), path = file)
         }
     )
     
@@ -228,39 +263,14 @@ server <- function(input, output, session) {
 
     # Controls ---------------------------------------------------------------
     
-    # Password protected UI
-    output$controlsUI <- renderUI({
-        req(input$controls_password)
-        if (input$controls_password == "p1zz3r14") {
-            tabsetPanel(
-                type = "pills",
-                tabPanel(
-                    "Fancoil",
-                    br(),
-                    fluidRow(
-                        column(
-                            2,
-                            actionButton("pull_config", "Pull", icon = icon("cloud-download-alt")),
-                            actionButton("push_config", "Push", icon = icon("cloud-upload-alt"))
-                        ),
-                        column(
-                            5,
-                            h4("Dilluns - Divendres")
-                        ),
-                        column(
-                            5,
-                            h4("Dissabte - Diumenge")
-                        )
-                    ),
-                    uiOutput('controls_fancoil')
-                ),
-                tabPanel(
-                    "Dipòsit",
-                    uiOutput('controls_diposit')
-                )
-            )
+    observe({
+        if (is.null(input$controls_password) || input$controls_password != config$controls_pwd) {
+            hideTab(inputId = "tabs", target = "Controls")
+        } else {
+            showTab(inputId = "tabs", target = "Controls")
         }
     })
+
     
     # Pull control table when Pull
     hp_control_updated <- eventReactive(input$pull_config, ignoreNULL = FALSE, {
@@ -375,8 +385,7 @@ server <- function(input, output, session) {
     output$plot_cop <- renderDygraph({
         info() %>% 
             select('datetime', 'E_power', 'COP', 'EER') %>% 
-            dyplot(ylab = '<b>Temperatura (ºC)</b>', strokeWidth = 2)
-            
+            dyplot(ylab = '<b>kWh tèrmics / kWh elèctrics</b>', strokeWidth = 2)
     })
 
 }
