@@ -7,12 +7,16 @@ library(lubridate)
 library(dygraphs)
 library(dutils)
 source('utils.R')
+options(scipen=999)
+
+
+config <- config::get(file = 'config.yml')
+
+
 reticulate::use_python(config$python_path, required = T) # Restart R session to change the python env
 boto3 <- reticulate::import("boto3")
 # dbKey <- reticulate::import("boto3.dynamodb")$conditions$Key
-options(scipen=999)
 
-config <- config::get(file = 'config.yml')
 
 
 # DynamoDB client --------------------------------------------------
