@@ -21,15 +21,16 @@ boto3 <- reticulate::import("boto3")
 
 # DynamoDB client --------------------------------------------------
 # DynamoDB Lab
-dynamodb <- get_dynamodb(config$dynamodb$access_key_id, config$dynamodb$secret_access_key, config$dynamodb$region_name)
-table <- get_dynamo_table(dynamodb, config$dynamodb$table_hp)
-table_libelium <- get_dynamo_table(dynamodb, config$dynamodb$table_meshlium)
-table_control <- get_dynamo_table(dynamodb, config$dynamodb$table_control)
+dynamodb <- get_dynamodb_py(config$dynamodb$access_key_id, config$dynamodb$secret_access_key, config$dynamodb$region_name)
+table <- get_dynamo_table_py(dynamodb, config$dynamodb$table_hp)
+table_libelium <- get_dynamo_table_py(dynamodb, config$dynamodb$table_meshlium)
+table_control <- get_dynamo_table_py(dynamodb, config$dynamodb$table_control)
 
 # DynamoDB Marc
-dynamodb_marc <- get_dynamodb(config$dynamodb_marc$access_key_id, config$dynamodb_marc$secret_access_key, config$dynamodb_marc$region_name)
-table_dht <- get_dynamo_table(dynamodb_marc, config$dynamodb_marc$table_dht)
-
+dynamodb_marc <- get_dynamodb_py(config$dynamodb_marc$access_key_id, config$dynamodb_marc$secret_access_key, config$dynamodb_marc$region_name)
+table_dht <- get_dynamo_table_py(dynamodb_marc, config$dynamodb_marc$table_dht)
+table_power <- get_dynamo_table_py(dynamodb_marc, 'power-sensors')
+# tpgx <- query_timeseries_data_table(table_power, "id", "9cce", "timestamp", Sys.Date() - days(1), Sys.Date(), time_interval_mins = 5, spread_column = 'data')
 
 # IoT client --------------------------------------------------------------
 iot <- boto3$client('iot-data',
@@ -82,10 +83,11 @@ ui <- fluidPage(
                     Explicació de les variables d'informació:
                     </p>
                     <ul>
-                        <li><b>Mode d'operació</b>: Buffer (1), Buffer+Cooling (2), 1 Zone (3), 1 Zone - 2 Systems (4), 1 Zone - Multiemitter (5), 2 Zones (6), 2 Zones - 2 Systems (7)</li>
-                        <li><b>Mode de configuració</b>: Hivern (0), Estiu (1), Automàtic (2)</li>
+                        <li><b>Mode de configuració</b>: Buffer (1), Buffer+Cooling (2), 1 Zone (3), 1 Zone - 2 Systems (4), 1 Zone - Multiemitter (5), 2 Zones (6), 2 Zones - 2 Systems (7)</li>
+                        <li><b>Mode d'operació</b>: Hivern (0), Estiu (1), Automàtic (2)</li>
                         <li><b>Alarma</b>: Amb alarmes FALSE, sense alarmes TRUE</li>
                         <li><b>Estat ON/OFF</b>: Bomba ON (0), bomba OFF (1)</li>
+                        <li><b>Potència</b>: Potència elèctrica (W) consumida per la bomba de calor.</li>
                         <li><b>COP</b>: Coefficient of Performance. Efficiència de la bomba de calor.</li>
                         <li><b>EER</b>: Energy Efficiency Ratio. Efficiència de la bomba de calor <b> només per refrigeració </b>.</li>
                     </ul>
@@ -122,6 +124,10 @@ ui <- fluidPage(
                         tabPanel(
                             "Lab",
                             dygraphOutput("plot_lab")
+                        ),
+                        tabPanel(
+                            "Consum",
+                            dygraphOutput("plot_power")
                         )
                     )
                 ),
@@ -136,10 +142,6 @@ ui <- fluidPage(
                         tabPanel(
                             "Funcionament",
                             dataTableOutput("table_funcionament")
-                        ),
-                        tabPanel(
-                            "Rendiment",
-                            dygraphOutput("plot_cop")
                         )
                     )
                 ),
@@ -183,40 +185,59 @@ ui <- fluidPage(
 # Server ------------------------------------------------------------------
 server <- function(input, output, session) {
     
-    # Gràfic ------------------------------------------------------------------
+    # Query data ------------------------------------------------------------------
+    # Modbus data
     data_hp <- reactive({
         # data <- dynamodb_query_items(table, "day", as.character(seq.Date(input$dates[1], input$dates[2], by = 'day'))) 
-        data <- query_table(table, "day", as.character(seq.Date(input$dates[1], input$dates[2], by = 'day'))) %>% 
+        data <- query_table_py(table, "day", as.character(seq.Date(input$dates[1], input$dates[2], by = 'day'))) %>% 
             mutate(datetime = with_tz(force_tz(as_datetime(paste(day, time)), tzone = 'CEST'), tzone = 'Europe/Madrid')) %>% 
             select(datetime, everything(), -day, -time)
         data
     })
     
-    hp_temperatures <- reactive({
-        select(data_hp(), any_of(c('datetime', 'Tm,i', 'Td', 'Te', 'Tm,r', 'Tp,impulsion', 'Tp,return', 'Temperature_S1')))
-    })
-    
-    info <- reactive({
-        select(data_hp(), any_of(c('datetime', 'E_power', 'COP', 'EER', 'CONFIG', 'Operation_mode', 'Td,c_winter', 'Td,c_summer', 'Status message', 'Alarm', 'State ON/OFF')))
-    })
-    
+    # Libelium data
     tint <- reactive({
-        # response <- table_libelium$scan(
-        #     FilterExpression = dbAttr("ts")$between(as.integer(as_datetime(input$dates[1]-hours(10))), as.integer(as_datetime(input$dates[2]+hours(10))))
-        # )
-        # 
-        # data <- map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
-        data <- scan_table(table_libelium, "ts", as.integer(as_datetime(input$dates[1]-hours(10))), as.integer(as_datetime(input$dates[2]+hours(10)))) %>% 
+        data <- scan_table_py(table_libelium, "ts", as.integer(as_datetime(input$dates[1]-hours(10))), as.integer(as_datetime(input$dates[2]+hours(10)))) %>% 
             mutate(datetime = as_datetime(ts, tz = 'Europe/Madrid')) %>% 
             select(datetime, Tint, everything()) %>% 
             arrange(datetime)
-    
+        
         data[, c(1, 2, grep('Temp_4', names(data)))]
     })
     
+    # DHT22 data
     dht_sensor <- reactive({
-        query_timeseries_data_table(table_dht, "id", "4CFB", "timestamp", input$dates[1], input$dates[2], time_interval_mins = 15, spread_column = 'data') %>% 
+        query_timeseries_data_table_py(table_dht, "id", "4CFB", "timestamp", input$dates[1], input$dates[2]+days(1)) %>% 
+            mutate(
+                datetime = floor_date(as_datetime(timestamp/1000, tz = config$tzone), '10 minutes'),
+                map_dfr(data, ~ .x)
+            ) %>% 
             select(datetime, DHT_sensor = temperature, heat_index)
+    })
+    
+    # Power sensor data
+    power_sensor <- reactive({
+        query_timeseries_data_table_py(table_power, "id", "E8EC4412CFA4", "timestamp", input$dates[1], input$dates[2]+days(1)) %>% 
+            mutate(
+                datetime = floor_date(as_datetime(timestamp/1000, tz = config$tzone), '5 minutes'),
+                map_dfr(data, ~ .x)
+            ) %>% 
+            mutate(power_demand = current*240) %>% 
+            select(datetime, power_demand) %>% 
+            decrease_resolution(10, 'average')
+    })
+    
+
+    # Group data --------------------------------------------------------------
+
+    info <- reactive({
+        select(data_hp(), any_of(c('datetime', 'COP', 'EER', 'CONFIG', 'Operation_mode', 'Td,c_winter', 'Td,c_summer', 'Status message', 'Alarm', 'State ON/OFF'))) %>% 
+            left_join(power_sensor(), by = 'datetime') %>% 
+            fill(power_demand, .direction = 'downup')
+    })
+    
+    hp_temperatures <- reactive({
+        select(data_hp(), any_of(c('datetime', 'Tm,i', 'Td', 'Te', 'Tm,r', 'Tp,impulsion', 'Tp,return', 'Temperature_S1')))
     })
     
     temperatures_data <- reactive({
@@ -225,6 +246,9 @@ server <- function(input, output, session) {
             left_join(dht_sensor(), by = 'datetime') %>% 
             fill(c(colnames(tint())[-1], colnames(dht_sensor())[-1]), .direction = 'downup')
     }) 
+    
+
+    # Gràfics temperatures -------------------------------------------------------------------
     
     output$plot <- renderDygraph({
         temperatures_data() %>% 
@@ -238,7 +262,6 @@ server <- function(input, output, session) {
     })
     
     output$plot_diposit <- renderDygraph({
-        td <<- temperatures_data()
         temperatures_data() %>% 
             select(datetime, starts_with("Tm"), Td) %>%
             dyplot(title = "<h4><center>Gràfic de temperatures del dipòsit</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
@@ -249,6 +272,20 @@ server <- function(input, output, session) {
             select(datetime, starts_with("Temp_"), Tint, Te, DHT_sensor, heat_index) %>% 
             dyplot(title = "<h4><center>Gràfic de temperatures del laboratori</center></h4>", ylab = "Temperatura (ºC)", strokeWidth = 2)
     })
+    
+    output$plot_power <- renderDygraph({
+        info() %>% 
+            select(datetime, power_demand, COP, EER) %>% 
+            dyplot(title = "<h4><center>Gràfic de potència i rendiment</center></h4>", strokeWidth = 2) %>% 
+            dyAxis('y', 'Potència (W)') %>% 
+            dyAxis('y2', 'kWh tèrmics / kWh elèctrics') %>% 
+            dySeries('power_demand', 'Consum elèctric') %>% 
+            dySeries('COP', axis = 'y2') %>% 
+            dySeries('EER', axis = 'y2')
+    })
+
+
+    # Descàrrega de fitxers ---------------------------------------------------
     
     output$download  <- downloadHandler(
         filename = function() {paste0("hp_lab_temperatures_", Sys.Date(), ".xlsx")},
@@ -279,7 +316,7 @@ server <- function(input, output, session) {
     # Pull control table when Pull
     hp_control_updated <- eventReactive(input$pull_config, ignoreNULL = FALSE, {
         response <- table_control$scan()
-        map_dfr(response$Items, ~ as_tibble(parse_item(.x))) %>% 
+        map_dfr(response$Items, ~ as_tibble(parse_python_object(.x))) %>% 
             rename(day_type = `day-type`) %>% 
             select(day_type, hour, setpoint, speed)
     })
@@ -372,11 +409,11 @@ server <- function(input, output, session) {
     })
     
 
-# Informació --------------------------------------------------------------
+    # Informació --------------------------------------------------------------
 
     output$table_config <- renderDataTable({
-        config_tbl <- info()[, c('datetime', 'CONFIG', 'Td,c_winter', 'Td,c_summer', 'Operation_mode')]
-        colnames(config_tbl) <- c('Dia i hora', 'Mode de configuració', 'Consigna dipòsit hivern', 'Consigna dipòsit estiu', "Mode d'operació")
+        config_tbl <- info()[, c('datetime', 'CONFIG', 'Operation_mode', 'Td,c_winter', 'Td,c_summer')]
+        colnames(config_tbl) <- c('Dia i hora', 'Mode de configuració', "Mode d'operació", 'Consigna dipòsit hivern', 'Consigna dipòsit estiu')
         return( config_tbl )
     })
     
@@ -385,13 +422,6 @@ server <- function(input, output, session) {
         colnames(funcionament_tbl) <- c('Dia i hora', 'Alarma', 'Estat ON/OFF')
         return( funcionament_tbl )
     })
-    
-    output$plot_cop <- renderDygraph({
-        info() %>% 
-            select('datetime', 'E_power', 'COP', 'EER') %>% 
-            dyplot(ylab = '<b>kWh tèrmics / kWh elèctrics</b>', strokeWidth = 2)
-    })
-
 }
 
 # Run the application 
