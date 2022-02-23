@@ -40,6 +40,7 @@ iot <- boto3$client('iot-data',
 
 # UI ----------------------------------------------------------------------
 ui <- fluidPage(
+  title = "Geotèrmia",
   useWaiter(),
   titlePanel(tagList(
     strong("Bomba de calor lab eXiT"), 
@@ -208,7 +209,8 @@ server <- function(input, output, session) {
         mutate(
           datetime = floor_date(with_tz(ymd_hms(paste(day, time), tz = 'CEST'), tz = config$tzone), unit = '10 minutes')
         ) %>% 
-        select(datetime, everything(), -day, -time)
+        select(datetime, everything(), -day, -time) %>% 
+        filter(date(datetime) >= input$dates[1])
     } else {
       return( NULL )
     }
@@ -284,7 +286,7 @@ server <- function(input, output, session) {
   })
   
   temperatures_data <- reactive({
-    if (is.null(data_hp())) return( NULL )
+    if (is.null(hp_temperatures())) return( NULL )
     temperatures_data <- hp_temperatures()
     
     if (!is.null(tint())) {
