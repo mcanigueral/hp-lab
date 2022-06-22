@@ -41,7 +41,10 @@ iot <- boto3$client('iot-data',
 # UI ----------------------------------------------------------------------
 ui <- fluidPage(
   title = "Geotèrmia",
-  useWaiter(),
+  autoWaiter(
+    html = spin_3(),
+    color = transparent(.5)
+  ),
   titlePanel(tagList(
     strong("Bomba de calor lab eXiT"), 
     HTML("&nbsp;"),
@@ -50,12 +53,22 @@ ui <- fluidPage(
   hr(),
   sidebarLayout(
     sidebarPanel = sidebarPanel(
-      dateRangeInput(
-        "dates", "Dia a visualitzar:", 
-        start = today(), end = today(),
-        min = dmy(01122020), max = today(),
-        weekstart = 1, language = "ca"
+      fluidRow(
+        column(
+          9,
+          dateRangeInput(
+            "dates", "Període a visualitzar:", 
+            start = today(), end = today(),
+            min = dmy(01122020), max = today(),
+            weekstart = 1, language = "ca"
+          )
+        ),
+        column(
+          3, align = "right", style = "margin-top: 22px;",
+          actionButton("submit", "Actualitza")
+        )
       ),
+      hr(),
       HTML(
         "
                 <p>
@@ -68,10 +81,8 @@ ui <- fluidPage(
                     <li><b>Tp,r</b>: Temperatura pou - màquina</li>
                     <li><b>Td</b>: Temperatura dipòsit</li>
                     <li><b>Te</b>: Temperatura exterior</li>
-                    <li><b>Temp_*</b>: Temperatura dels sensors del laboratori</li>
-                    <li><b>Tint</b>: Temperatura mitjana dels sensors del laboratori</li>
                     <li><b>DHT_sensor</b>: Temperatura del sensor DHT22 del laboratori</li>
-                    <li><b>heat_index</b>: Índex de temperatura (sensació tèrmica per humitat)</li>
+                    <li><b>DHT_fancoil</b>: Temperatura del sensor DHT22 del fancoil</li>
                     <li><b>Temperature_S1</b>: Temperatura de la sonda de 50m dels pous</li>
                 </ul>
                 "
@@ -190,19 +201,18 @@ ui <- fluidPage(
 # Server ------------------------------------------------------------------
 server <- function(input, output, session) {
   
-  # create a waiter
-  w <- Waiter$new(
-    id = "plot",
-    html = spin_3(), 
-    color = transparent(.5)
-  )
+  
+
+  # Date selector -----------------------------------------------------------
+  dates <- eventReactive(input$submit, ignoreInit = F, ignoreNULL = F, {
+    c(input$dates[1], input$dates[2])
+  })
+  
     
   # Query data ------------------------------------------------------------------
   # Modbus data
   data_hp <- reactive({
-    w$show()
-    
-    data_hp <- query_table_py(table, "day", as.character(seq.Date(input$dates[1], input$dates[2]+days(1), by = 'day'))) 
+    data_hp <- query_table_py(table, "day", as.character(seq.Date(dates()[1], dates()[2]+days(1), by = 'day'))) 
 
     if (!is.null(data_hp) & nrow(data_hp) > 0) {
       data_hp %>% 
@@ -210,37 +220,43 @@ server <- function(input, output, session) {
           datetime = floor_date(with_tz(ymd_hms(paste(day, time), tz = 'CEST'), tz = config$tzone), unit = '10 minutes')
         ) %>% 
         select(datetime, everything(), -day, -time) %>% 
-        filter(date(datetime) >= input$dates[1])
+        filter(between(date(datetime), dates()[1], dates()[2]))
     } else {
       return( NULL )
     }
   })
   
-  # Libelium data
-  tint <- reactive({
-    data_libellium <- scan_table_py(table_libelium, "ts", as.integer(input$dates[1]-hours(10)), as.integer(input$dates[2]+days(1)+hours(10)))
-  
-    if (!is.null(data_libellium) & nrow(data_libellium) > 0) {
-      data_libellium %>% 
-        mutate(datetime = floor_date(as_datetime(ts, tz = config$tzone), unit = '5 minutes')) %>% 
-        select(datetime, Tint, starts_with("Temp_4")) %>% 
-        arrange(datetime)
-    } else {
-      return( NULL )
-    }
-  })
+  # # Libelium data
+  # tint <- reactive({
+  #   data_libellium <- scan_table_py(table_libelium, "ts", as.integer(dates()[1]-hours(10)), as.integer(dates()[2]+days(1)+hours(10)))
+  # 
+  #   if (!is.null(data_libellium) & nrow(data_libellium) > 0) {
+  #     data_libellium %>% 
+  #       mutate(datetime = floor_date(as_datetime(ts, tz = config$tzone), unit = '5 minutes')) %>% 
+  #       select(datetime, Tint, starts_with("Temp_4")) %>% 
+  #       arrange(datetime)
+  #   } else {
+  #     return( NULL )
+  #   }
+  # })
   
   # DHT22 data
   dht_sensor <- reactive({
-    data_dht <- query_timeseries_data_table_py(table_dht, "id", "4CFB", "timestamp", input$dates[1], input$dates[2]+days(1))
-
+    data_dht <- query_timeseries_data_table_py(table_dht, "id", c("4CFB", "54D0"), "timestamp", dates()[1], dates()[2]+days(1))
+    data_dht <<- data_dht
+    
     if (!is.null(data_dht) & nrow(data_dht) > 0) {
       data_dht %>% 
         mutate(
           datetime = floor_date(as_datetime(timestamp/1000, tz = config$tzone), '15 minutes'),
           map_dfr(data, ~ .x)
         ) %>% 
-        select(datetime, DHT_sensor = temperature, heat_index)
+        # select(datetime, DHT_sensor = temperature, heat_index)
+        select(datetime, id, temperature) %>% 
+        mutate(id = recode(id, `4CFB` = "DHT_sensor", `54D0` = "DHT_fancoil")) %>% 
+        group_by(datetime, id) %>% 
+        summarise_all(mean) %>% 
+        pivot_wider(names_from = id, values_from = temperature)
     } else {
       return( NULL )
     }
@@ -248,7 +264,7 @@ server <- function(input, output, session) {
   
   # Power sensor data
   power_sensor <- reactive({
-    data_power <- query_timeseries_data_table_py(table_power, "id", "E8EC4412CFA4", "timestamp", input$dates[1], input$dates[2]+days(1))
+    data_power <- query_timeseries_data_table_py(table_power, "id", "E8EC4412CFA4", "timestamp", dates()[1], dates()[2]+days(1))
 
     if (!is.null(data_power) & nrow(data_power) > 0) {
       data_power %>% 
@@ -289,11 +305,11 @@ server <- function(input, output, session) {
     if (is.null(hp_temperatures())) return( NULL )
     temperatures_data <- hp_temperatures()
     
-    if (!is.null(tint())) {
-      temperatures_data <- temperatures_data %>% 
-        left_join(tint(), by = 'datetime') %>% 
-        fill_down_until(colnames(tint())[-1], max_timeslots = 6*6) # 6 hores
-    }
+    # if (!is.null(tint())) {
+    #   temperatures_data <- temperatures_data %>% 
+    #     left_join(tint(), by = 'datetime') %>% 
+    #     fill_down_until(colnames(tint())[-1], max_timeslots = 6*6) # 6 hores
+    # }
     
     if (!is.null(dht_sensor())) {
       temperatures_data <- temperatures_data %>% 
