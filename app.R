@@ -212,19 +212,23 @@ server <- function(input, output, session) {
   # Query data ------------------------------------------------------------------
   # Modbus data
   data_hp <- reactive({
-    data_hp <- query_table_py(table, "day", as.character(seq.Date(dates()[1], dates()[2]+days(1), by = 'day'))) 
-
-    if (!is.null(data_hp) & nrow(data_hp) > 0) {
-      data_hp %>% 
-        mutate(
-          datetime = floor_date(with_tz(ymd_hms(paste(day, time), tz = 'CEST'), tz = config$tzone), unit = '10 minutes')
-        ) %>% 
-        select(datetime, everything(), -day, -time) %>% 
-        filter(between(date(datetime), dates()[1], dates()[2]))
-    } else {
+    hp_data <- query_table_py(table, "day", as.character(seq.Date(dates()[1], dates()[2]+days(1), by = 'day'))) 
+    
+    if (is.null(hp_data) | nrow(hp_data) == 0) {
       return( NULL )
     }
+    
+    hp_data <- hp_data %>% 
+      mutate(
+        datetime = floor_date(with_tz(ymd_hms(paste(day, time), tz = 'CEST'), tz = config$tzone), unit = '10 minutes')
+      ) %>% 
+      select(datetime, everything(), -day, -time) %>% 
+      filter(between(date(datetime), dates()[1], dates()[2]))
+    hp_data <<- hp_data
+    
+    return( hp_data )
   })
+  
   
   # # Libelium data
   # tint <- reactive({
@@ -274,7 +278,7 @@ server <- function(input, output, session) {
         ) %>% 
         mutate(power_demand = current*240) %>% 
         select(datetime, power_demand) %>% 
-        decrease_resolution(10, 'average')
+        decrease_timeseries_resolution(10, 'average')
     } else {
       return( NULL )
     }
@@ -304,7 +308,7 @@ server <- function(input, output, session) {
   temperatures_data <- reactive({
     if (is.null(hp_temperatures())) return( NULL )
     temperatures_data <- hp_temperatures()
-    
+    temperatures_data <<- temperatures_data
     # if (!is.null(tint())) {
     #   temperatures_data <- temperatures_data %>% 
     #     left_join(tint(), by = 'datetime') %>% 
