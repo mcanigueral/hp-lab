@@ -46,9 +46,9 @@ ui <- fluidPage(
     color = transparent(.5)
   ),
   titlePanel(tagList(
-    strong("Bomba de calor lab eXiT"), 
+    strong("Bomba de calor lab eXiT"),
     HTML("&nbsp;"),
-    img(src = "https://exit.udg.edu/wp-content/uploads/2016/09/logo-exit-udg.png", height = 60)
+    img(src = "logo-exit-udg.png", height = 50),
   )),
   hr(),
   sidebarLayout(
@@ -307,8 +307,8 @@ server <- function(input, output, session) {
   
   temperatures_data <- reactive({
     if (is.null(hp_temperatures())) return( NULL )
-    temperatures_data <- hp_temperatures()
-    temperatures_data <<- temperatures_data
+    data_temp <- hp_temperatures()
+    
     # if (!is.null(tint())) {
     #   temperatures_data <- temperatures_data %>% 
     #     left_join(tint(), by = 'datetime') %>% 
@@ -316,12 +316,12 @@ server <- function(input, output, session) {
     # }
     
     if (!is.null(dht_sensor())) {
-      temperatures_data <- temperatures_data %>% 
+      data_temp <- data_temp %>% 
         left_join(dht_sensor(), by = 'datetime') %>% 
         fill_down_until(colnames(dht_sensor())[-1], max_timeslots = 6*6) # 6 hores
     }
     
-    temperatures_data
+    data_temp
   }) 
   
   
